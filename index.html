@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pro Weather Map</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            transition: background-color 0.3s, color 0.3s;
+        }
+        body.dark-mode {
+            background-color: #1a202c;
+            color: #e2e8f0;
+        }
+        body.dark-mode .bg-white {
+            background-color: #2d3748;
+        }
+        body.dark-mode .text-gray-800 {
+            color: #e2e8f0;
+        }
+        body.dark-mode .text-gray-600 {
+            color: #a0aec0;
+        }
+        body.dark-mode .border-gray-300 {
+            border-color: #4a5568;
+        }
+        .weather-icon {
+            width: 32px;
+            height: 32px;
+            vertical-align: middle;
+            margin-right: 8px;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center bg-gray-100">
+    <div class="max-w-3xl w-full bg-white p-8 rounded-lg shadow-lg">
+        <div class="flex justify-between items-center mb-4">
+            <h1 class="text-3xl font-bold text-gray-800">Pro Weather Map</h1>
+            <button id="darkModeToggle" class="bg-gray-200 p-2 rounded-lg hover:bg-gray-300 transition">
+                <i class="fas fa-moon"></i>
+            </button>
+        </div>
+        <p class="text-center text-gray-600 mb-2">
+            Developed by Sujan Rai, SM Ripon, and the Accessible Resource Team.
+        </p>
+        <p class="text-center text-gray-600 mb-6">
+            Search by city or use your location to get detailed weather information.
+        </p>
+
+        <!-- City Search -->
+        <div class="mb-4">
+            <label for="cityInput" class="block text-gray-700 font-medium mb-2">Enter City Name</label>
+            <input id="cityInput" type="text" class="w-full p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Enter city name, e.g., New Delhi, India">
+            <div id="recentSearches" class="mt-2 flex flex-wrap gap-2"></div>
+        </div>
+        <!-- Weather Options -->
+        <h2 class="text-xl font-semibold text-gray-800 mb-4">Select Weather Option</h2>
+        <div class="flex flex-col sm:flex-row sm:space-x-4 mb-4">
+            <div class="flex-1 mb-2 sm:mb-0">
+                <label for="weatherOption" class="block text-gray-700 font-medium mb-1">Weather Type</label>
+                <select id="weatherOption" class="w-full p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="" disabled selected>Select an option</option>
+                    <option value="current">Current Weather</option>
+                    <option value="hourly">Hourly Forecast (24 Hours)</option>
+                    <option value="weekly">Weekly Forecast (7 Days)</option>
+                </select>
+            </div>
+            <div class="flex-1">
+                <label for="unitSelect" class="block text-gray-700 font-medium mb-1">Temperature Unit</label>
+                <select id="unitSelect" class="w-full p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="celsius">Celsius</option>
+                    <option value="fahrenheit">Fahrenheit</option>
+                </select>
+            </div>
+        </div>
+
+        <button id="startMap" class="w-full bg-blue-500 text-white p-2 rounded-lg disabled:bg-gray-400 disabled:cursor-not-allowed hover:bg-blue-600 transition" disabled>
+            Start Map
+        </button>
+
+        <!-- Loading and Output -->
+        <div id="loading" class="hidden text-center text-gray-600 mt-4">
+            Mapping weather, please wait...
+        </div>
+        <div id="alerts" class="hidden mt-4 p-4 bg-yellow-100 text-yellow-800 rounded-lg"></div>
+        <div id="weatherOutput" class="hidden mt-4 text-gray-800"></div>
+        <canvas id="weatherChart" class="hidden mt-4" style="max-height: 300px;"></canvas>
+
+        <!-- Button Group -->
+        <div id="buttonGroup" class="hidden mt-4 flex flex-col sm:flex-row sm:space-x-4">
+            <button id="copyButton" class="flex-1 bg-green-500 text-white p-2 rounded-lg hover:bg-green-600 transition">
+                Copy Data
+            </button>
+            <button id="exportButton" class="flex-1 bg-purple-500 text-white p-2 rounded-lg hover:bg-purple-600 transition">
+                Export as CSV
+            </button>
+            <button id="resetButton" class="flex-1 bg-red-500 text-white p-2 rounded-lg hover:bg-red-600 transition">
+                Reset
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // DOM Elements
+        const cityInput = document.getElementById('cityInput');
+        const weatherOption = document.getElementById('weatherOption');
+        const unitSelect = document.getElementById('unitSelect');
+        const startMap = document.getElementById('startMap');
+        const loading = document.getElementById('loading');
+        const alerts = document.getElementById('alerts');
+        const weatherOutput = document.getElementById('weatherOutput');
+        const weatherChartCanvas = document.getElementById('weatherChart');
+        const weatherChart = weatherChartCanvas.getContext('2d');
+        const buttonGroup = document.getElementById('buttonGroup');
+        const copyButton = document.getElementById('copyButton');
+        const exportButton = document.getElementById('exportButton');
+        const resetButton = document.getElementById('resetButton');
+        const darkModeToggle = document.getElementById('darkModeToggle');
+        const recentSearches = document.getElementById('recentSearches');
+
+        let chartInstance = null;
+        let currentData = null;
+
+        // Load recent searches from local storage
+        let recentCities = JSON.parse(localStorage.getItem('recentCities')) || [];
+        updateRecentSearches();
+
+        // Enable/Disable Start Map button
+        function updateButtonState() {
+            const hasValidInput = weatherOption.value && (cityInput.value.trim() || navigator.geolocation);
+            startMap.disabled = !hasValidInput;
+        }
+
+        cityInput.addEventListener('input', () => {
+            cityInput.value = cityInput.value.trimStart();
+            updateButtonState();
+        });
+        weatherOption.addEventListener('change', updateButtonState);
+        unitSelect.addEventListener('change', updateButtonState);
+
+        // Dark Mode Toggle
+        darkModeToggle.addEventListener('click', () => {
+            document.body.classList.toggle('dark-mode');
+            darkModeToggle.innerHTML = document.body.classList.contains('dark-mode')
+                ? '<i class="fas fa-sun"></i>'
+                : '<i class="fas fa-moon"></i>';
+        });
+
+        // Recent Searches
+        function updateRecentSearches() {
+            recentSearches.innerHTML = recentCities.map(city =>
+                `<button class="bg-gray-200 text-gray-800 px-3 py-1 rounded-lg hover:bg-gray-300 transition" data-city="${city}">${city}</button>`
+            ).join('');
+            recentSearches.querySelectorAll('button').forEach(btn =>
+                btn.addEventListener('click', () => {
+                    cityInput.value = btn.dataset.city;
+                    updateButtonState();
+                })
+            );
+        }
+
+        // Start Map button handler
+        startMap.addEventListener('click', async () => {
+            if (!weatherOption.value) {
+                showError('Please select a weather option.');
+                return;
+            }
+
+            loading.classList.remove('hidden');
+            startMap.disabled = true;
+            alerts.classList.add('hidden');
+            weatherOutput.classList.add('hidden');
+            buttonGroup.classList.add('hidden');
+            weatherChartCanvas.classList.add('hidden');
+            if (chartInstance) {
+                chartInstance.destroy();
+                chartInstance = null;
+            }
+
+            try {
+                let lat, lon, displayName;
+                if (cityInput.value.trim()) {
+                    // Input validation
+                    if (!/^[a-zA-Z\s,]+$/.test(cityInput.value.trim())) {
+                        throw new Error('Invalid city name. Use letters, spaces, and commas only.');
+                    }
+
+                    // Geocode city
+                    const geoResponse = await fetch(
+                        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(cityInput.value.trim())}`
+                    );
+                    const geoData = await geoResponse.json();
+                    if (!geoData.length) throw new Error('City not found. Please check your input.');
+                    lat = parseFloat(geoData[0].lat);
+                    lon = parseFloat(geoData[0].lon);
+                    displayName = geoData[0].display_name;
+
+                    // Save to recent searches
+                    const city = cityInput.value.trim();
+                    if (!recentCities.includes(city)) {
+                        recentCities.unshift(city);
+                        if (recentCities.length > 5) recentCities.pop();
+                        localStorage.setItem('recentCities', JSON.stringify(recentCities));
+                        updateRecentSearches();
+                    }
+                } else if (navigator.geolocation) {
+                    const position = await new Promise((resolve, reject) => {
+                        navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 });
+                    });
+                    lat = position.coords.latitude;
+                    lon = position.coords.longitude;
+                    displayName = 'Your Location';
+                } else {
+                    throw new Error('Geolocation is not supported by your browser.');
+                }
+
+                // Construct Open-Meteo API URL
+                let apiUrl;
+                const unit = unitSelect.value === 'fahrenheit' ? '&temperature_unit=fahrenheit' : '';
+                switch (weatherOption.value) {
+                    case 'current':
+                        apiUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weathercode,relative_humidity_2m,wind_speed_10m,pressure_msl${unit}`;
+                        break;
+                    case 'hourly':
+                        apiUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=temperature_2m,weathercode,relative_humidity_2m,wind_speed_10m,pressure_msl&forecast_days=1${unit}`;
+                        break;
+                    case 'weekly':
+                        apiUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=temperature_2m_max,temperature_2m_min,weathercode,relative_humidity_2m_mean,wind_speed_10m_max&forecast_days=7${unit}`;
+                        break;
+                    default:
+                        throw new Error('Invalid weather option selected.');
+                }
+
+                // Fetch weather data
+                const data = await fetchWithRetry(apiUrl, 3);
+                currentData = data;
+
+                // Format output
+                let formattedOutput;
+                if (weatherOption.value === 'current') {
+                    const { temperature_2m, weathercode, relative_humidity_2m, wind_speed_10m, pressure_msl } = data.current;
+                    formattedOutput = `
+                        <div class="flex items-center">
+                            <img src="${getWeatherIcon(weathercode)}" class="weather-icon" alt="Weather icon">
+                            Current Weather: ${temperature_2m.toFixed(1)}°${unitSelect.value === 'fahrenheit' ? 'F' : 'C'}, ${getWeatherDescription(weathercode)}
+                        </div>
+                        <p>Humidity: ${relative_humidity_2m}%</p>
+                        <p>Wind Speed: ${wind_speed_10m.toFixed(1)} km/h</p>
+                        <p>Pressure: ${pressure_msl.toFixed(1)} hPa</p>
+                    `;
+                } else if (weatherOption.value === 'hourly') {
+                    const hourlyData = data.hourly;
+                    if (!hourlyData.time || hourlyData.time.length < 24) {
+                        throw new Error('Incomplete hourly data received.');
+                    }
+                    formattedOutput = 'Hourly Forecast for Next 24 Hours:<br>' + hourlyData.time.slice(0, 24).map((time, i) => {
+                        return `
+                            <div class="flex items-center">
+                                <img src="${getWeatherIcon(hourlyData.weathercode[i])}" class="weather-icon" alt="Weather icon">
+                                ${new Date(time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}: 
+                                ${hourlyData.temperature_2m[i].toFixed(1)}°${unitSelect.value === 'fahrenheit' ? 'F' : 'C'}, 
+                                ${getWeatherDescription(hourlyData.weathercode[i])}, 
+                                Humidity: ${hourlyData.relative_humidity_2m[i]}%, 
+                                Wind: ${hourlyData.wind_speed_10m[i].toFixed(1)} km/h
+                            </div>
+                        `;
+                    }).join('');
+
+                    // Render Chart
+                    renderChart(
+                        hourlyData.time.slice(0, 24).map(t => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
+                        hourlyData.temperature_2m.slice(0, 24),
+                        `Hourly Temperature (°${unitSelect.value === 'fahrenheit' ? 'F' : 'C'})`
+                    );
+                } else if (weatherOption.value === 'weekly') {
+                    const dailyData = data.daily;
+                    if (!dailyData.time || dailyData.time.length < 7) {
+                        throw new Error('Incomplete weekly data received.');
+                    }
+                    formattedOutput = 'Weekly Forecast:<br>' + dailyData.time.map((time, i) => {
+                        return `
+                            <div class="flex items-center">
+                                <img src="${getWeatherIcon(dailyData.weathercode[i])}" class="weather-icon" alt="Weather icon">
+                                ${new Date(time).toLocaleDateString()}: 
+                                Max ${dailyData.temperature_2m_max[i].toFixed(1)}°${unitSelect.value === 'fahrenheit' ? 'F' : 'C'}, 
+                                Min ${dailyData.temperature_2m_min[i].toFixed(1)}°${unitSelect.value === 'fahrenheit' ? 'F' : 'C'}, 
+                                ${getWeatherDescription(dailyData.weathercode[i])}, 
+                                Humidity: ${dailyData.relative_humidity_2m_mean[i]}%
+                            </div>
+                        `;
+                    }).join('');
+
+                    // Render Chart
+                    renderChart(
+                        dailyData.time.map(t => new Date(t).toLocaleDateString()),
+                        dailyData.temperature_2m_max,
+                        `Daily Max Temperature (°${unitSelect.value === 'fahrenheit' ? 'F' : 'C'})`
+                    );
+                }
+
+                // Check for severe weather alerts
+                if (weatherOption.value === 'current' && data.current.weathercode >= 95) {
+                    alerts.classList.remove('hidden');
+                    alerts.innerHTML = '⚠️ Severe Weather Alert: Thunderstorm detected. Stay safe!';
+                }
+
+                // Display output
+                loading.classList.add('hidden');
+                weatherOutput.classList.remove('hidden');
+                weatherOutput.innerHTML = `Your weather map for ${displayName}:<br>${formattedOutput}`;
+                buttonGroup.classList.remove('hidden');
+                if (weatherOption.value !== 'current') {
+                    weatherChartCanvas.classList.remove('hidden');
+                }
+
+            } catch (error) {
+                showError(error.message);
+            } finally {
+                loading.classList.add('hidden');
+                startMap.disabled = false;
+            }
+        });
+
+        // Show error message
+        function showError(message) {
+            loading.classList.add('hidden');
+            weatherOutput.classList.remove('hidden');
+            weatherOutput.innerHTML = `Error: ${message} please, check your internet connection and try again.`;
+            startMap.disabled = false;
+        }
+
+        // Fetch with retry mechanism
+        async function fetchWithRetry(url, retries) {
+            for (let i = 0; i < retries; i++) {
+                try {
+                    const response = await fetch(url);
+                    if (!response.ok) throw new Error(`Network error: ${response.status}`);
+                    const data = await response.json();
+                    if (!data) throw new Error('No data received from API.');
+                    return data;
+                } catch (error) {
+                    if (i === retries - 1) throw new Error(`Failed to fetch data: ${error.message}`);
+                    await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+                }
+            }
+        }
+
+        // Copy button handler
+        copyButton.addEventListener('click', () => {
+            if (!currentData) {
+                showError('No weather data available to copy.');
+                return;
+            }
+            const text = weatherOutput.innerText.replace(/^Your weather map for .+?:\s*/, '').trim();
+            navigator.clipboard.writeText(text)
+                .then(() => alert('Weather data copied to clipboard!'))
+                .catch(() => alert('Failed to copy weather data.'));
+        });
+
+        // Export as CSV
+        exportButton.addEventListener('click', () => {
+            if (!currentData) {
+                showError('No weather data available to export.');
+                return;
+            }
+
+            let csvContent = 'data:text/csv;charset=utf-8,';
+            let rows = [];
+
+            if (weatherOption.value === 'current') {
+                const { temperature_2m, weathercode, relative_humidity_2m, wind_speed_10m, pressure_msl } = currentData.current;
+                rows.push(['Metric', 'Value']);
+                rows.push(['Temperature', `${temperature_2m.toFixed(1)}°${unitSelect.value === 'fahrenheit' ? 'F' : 'C'}`]);
+                rows.push(['Condition', getWeatherDescription(weathercode)]);
+                rows.push(['Humidity', `${relative_humidity_2m}%`]);
+                rows.push(['Wind Speed', `${wind_speed_10m.toFixed(1)} km/h`]);
+                rows.push(['Pressure', `${pressure_msl.toFixed(1)} hPa`]);
+            } else if (weatherOption.value === 'hourly') {
+                const hourlyData = currentData.hourly;
+                rows.push(['Time', `Temperature (°${unitSelect.value === 'fahrenheit' ? 'F' : 'C'})`, 'Condition', 'Humidity (%)', 'Wind Speed (km/h)']);
+                hourlyData.time.slice(0, 24).forEach((time, i) => {
+                    rows.push([
+                        new Date(time).toLocaleTimeString(),
+                        hourlyData.temperature_2m[i].toFixed(1),
+                        getWeatherDescription(hourlyData.weathercode[i]),
+                        hourlyData.relative_humidity_2m[i],
+                        hourlyData.wind_speed_10m[i].toFixed(1)
+                    ]);
+                });
+            } else if (weatherOption.value === 'weekly') {
+                const dailyData = currentData.daily;
+                rows.push(['Date', `Max Temp (°${unitSelect.value === 'fahrenheit' ? 'F' : 'C'})`, `Min Temp (°${unitSelect.value === 'fahrenheit' ? 'F' : 'C'})`, 'Condition', 'Humidity (%)']);
+                dailyData.time.forEach((time, i) => {
+                    rows.push([
+                        new Date(time).toLocaleDateString(),
+                        dailyData.temperature_2m_max[i].toFixed(1),
+                        dailyData.temperature_2m_min[i].toFixed(1),
+                        getWeatherDescription(dailyData.weathercode[i]),
+                        dailyData.relative_humidity_2m_mean[i]
+                    ]);
+                });
+            }
+
+            csvContent += rows.map(row => row.map(cell => `"${cell}"`).join(',')).join('\n');
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement('a');
+            link.setAttribute('href', encodedUri);
+            link.setAttribute('download', `weather_${weatherOption.value}_${new Date().toISOString().split('T')[0]}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        });
+
+        // Reset button handler
+        resetButton.addEventListener('click', () => {
+            cityInput.value = '';
+            weatherOption.value = '';
+            unitSelect.value = 'celsius';
+            startMap.disabled = true;
+            loading.classList.add('hidden');
+            alerts.classList.add('hidden');
+            weatherOutput.classList.add('hidden');
+            weatherChartCanvas.classList.add('hidden');
+            buttonGroup.classList.add('hidden');
+            weatherOutput.innerHTML = '';
+            if (chartInstance) {
+                chartInstance.destroy();
+                chartInstance = null;
+            }
+            currentData = null;
+        });
+
+        // Weather code to description mapping
+        function getWeatherDescription(code) {
+            const weatherCodes = {
+                0: 'Clear sky',
+                1: 'Mainly clear',
+                2: 'Partly cloudy',
+                3: 'Overcast',
+                61: 'Rain: Slight',
+                63: 'Rain: Moderate',
+                65: 'Rain: Heavy',
+                95: 'Thunderstorm'
+            };
+            return weatherCodes[code] || 'Unknown';
+        }
+
+        // Weather code to icon mapping
+        function getWeatherIcon(code) {
+            const iconMap = {
+                0: 'https://openweathermap.org/img/wn/01d.png',
+                1: 'https://openweathermap.org/img/wn/02d.png',
+                2: 'https://openweathermap.org/img/wn/03d.png',
+                3: 'https://openweathermap.org/img/wn/04d.png',
+                61: 'https://openweathermap.org/img/wn/10d.png',
+                63: 'https://openweathermap.org/img/wn/09d.png',
+                65: 'https://openweathermap.org/img/wn/09d.png',
+                95: 'https://openweathermap.org/img/wn/11d.png'
+            };
+            return iconMap[code] || 'https://openweathermap.org/img/wn/01d.png';
+        }
+
+        // Render Chart
+        function renderChart(labels, data, label) {
+            if (!labels || !data || labels.length !== data.length) {
+                showError('Invalid chart data. Please try again.');
+                return;
+            }
+
+            try {
+                chartInstance = new Chart(weatherChart, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: label,
+                            data: data,
+                            borderColor: '#3b82f6',
+                            backgroundColor: 'rgba(59, 130, 246, 0.2)',
+                            fill: false,
+                            tension: 0.4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            y: {
+                                beginAtZero: false,
+                                title: { display: true, text: label }
+                            },
+                            x: {
+                                title: { display: true, text: 'Time/Date' }
+                            }
+                        },
+                        plugins: {
+                            legend: { display: true },
+                            tooltip: { enabled: true }
+                        }
+                    }
+                });
+            } catch (error) {
+                showError('Failed to render chart. Please try again.');
+            }
+        }
+    </script>
+</body>
+</html>
